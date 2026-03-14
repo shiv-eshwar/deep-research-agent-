@@ -66,11 +66,11 @@ EXPOSE 8080
 # ── Health check ─────────────────────────────────────────────────
 # Docker will mark container unhealthy if /health fails
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" \
-    || exit 1
+    CMD curl --fail http://localhost:${PORT:-8080}/_stcore/health || exit 1
 
 # ── Start command ─────────────────────────────────────────────────
+# Make start script executable
+RUN chmod +x run.sh
+
 # $PORT is set by Cloud Run (usually 8080)
-# --workers 1: Research jobs are heavy — 1 worker is enough for Cloud Run
-# --timeout 300: Research takes up to 5 mins — don't kill the request early
-CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --timeout-keep-alive 300"]
+CMD ["./run.sh"]
