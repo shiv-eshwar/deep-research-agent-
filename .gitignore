@@ -1,0 +1,33 @@
+# Secrets — NEVER commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.Python
+
+# Output files (these are generated, not source)
+output/
+*.md.backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

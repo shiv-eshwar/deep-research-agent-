@@ -1,0 +1,115 @@
+# .github/workflows/deploy.yml
+#
+# CI/CD Pipeline: GitHub → Google Cloud Run
+#
+# Triggers on every push to `main` branch.
+# Flow: push code → build Docker image → push to GCR → deploy to Cloud Run
+#
+# ══════════════════════════════════════════════════════════════════
+# SETUP REQUIRED (one-time):
+#
+# 1. Create a GCP Service Account with these roles:
+#    - Cloud Run Admin
+#    - Storage Admin
+#    - Cloud Build Service Account
+#    - Artifact Registry Writer
+#
+# 2. Download the service account JSON key
+#
+# 3. Add these GitHub Secrets (Settings → Secrets → Actions):
+#    - GCP_SA_KEY      → paste the entire JSON key file content
+#    - GCP_PROJECT_ID  → your GCP project ID (e.g. "my-project-123")
+#    - OPENAI_API_KEY  → your OpenAI key
+#    - TAVILY_API_KEY  → your Tavily key (optional)
+# ══════════════════════════════════════════════════════════════════
+
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+env:
+  SERVICE_NAME: deep-research-agent
+  REGION: us-central1
+  IMAGE: gcr.io/${{ secrets.GCP_PROJECT_ID }}/deep-research-agent
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      # ── Step 1: Checkout code ──────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Step 2: Authenticate to GCP ───────────────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # ── Step 3: Set up gcloud CLI ──────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # ── Step 4: Configure Docker for GCR ──────────────────────────
+      - name: Configure Docker
+        run: gcloud auth configure-docker --quiet
+
+      # ── Step 5: Build Docker image ─────────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag ${{ env.IMAGE }}:${{ github.sha }} \
+            --tag ${{ env.IMAGE }}:latest \
+            .
+
+      # ── Step 6: Push to Google Container Registry ──────────────────
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── Step 7: Deploy to Cloud Run ────────────────────────────────
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 540 \
+            --concurrency 10 \
+            --min-instances 0 \
+            --max-instances 5 \
+            --set-env-vars "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}" \
+            --quiet
+
+      # ── Step 8: Print the live URL ────────────────────────────────
+      - name: Get Service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --format "value(status.url)")
+          echo "🚀 Deployed to: $URL"
+          echo "SERVICE_URL=$URL" >> $GITHUB_ENV
+
+      # ── Step 9: Smoke test the deployment ─────────────────────────
+      - name: Smoke test
+        run: |
+          sleep 10  # Wait for deployment to stabilize
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" $SERVICE_URL/health)
+          if [ "$STATUS" -eq "200" ]; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed with status $STATUS"
+            exit 1
+          fi
